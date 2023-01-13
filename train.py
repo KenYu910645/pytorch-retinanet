@@ -8,34 +8,46 @@ import torch.optim as optim
 from torchvision import transforms
 
 from retinanet import model
-from retinanet.dataloader import CocoDataset, CSVDataset, collater, Resizer, AspectRatioBasedSampler, Augmenter, \
+from retinanet.dataloader import KittiDataset, CocoDataset, CSVDataset, collater, Resizer, AspectRatioBasedSampler, Augmenter, \
     Normalizer
 from torch.utils.data import DataLoader
 
 from retinanet import coco_eval
 from retinanet import csv_eval
+from retinanet import kitti_eval
 
 assert torch.__version__.split('.')[0] == '1'
 
 print('CUDA available: {}'.format(torch.cuda.is_available()))
 
+CATEGORY = ['Car']
 
 def main(args=None):
     parser = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
 
-    parser.add_argument('--dataset', help='Dataset type, must be one of csv or coco.')
+    parser.add_argument('--dataset', help='Dataset type, must be one of csv or coco.', default='kitti')
+    parser.add_argument('--kitti_path', help='Path to KITTI directory', default='/home/lab530/KenYu/kitti/')
+    parser.add_argument('--split_path', help='Path to KITTI directory', default='/home/lab530/KenYu/visualDet3D/visualDet3D/data/kitti/chen_split/')
+    
     parser.add_argument('--coco_path', help='Path to COCO directory')
     parser.add_argument('--csv_train', help='Path to file containing training annotations (see readme)')
     parser.add_argument('--csv_classes', help='Path to file containing class list (see readme)')
     parser.add_argument('--csv_val', help='Path to file containing validation annotations (optional, see readme)')
 
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
-    parser.add_argument('--epochs', help='Number of epochs', type=int, default=100)
+    parser.add_argument('--epochs', help='Number of epochs', type=int, default=30) #  default=100
 
     parser = parser.parse_args(args)
 
     # Create the data loaders
-    if parser.dataset == 'coco':
+    if parser.dataset == 'kitti':
+        dataset_train = KittiDataset(parser.kitti_path, split_path=f'{parser.split_path}train.txt',
+                                     transform=transforms.Compose([Normalizer(), Augmenter(), Resizer()],
+                                     category = CATEGORY))
+        dataset_val   = KittiDataset(parser.kitti_path, split_path=f'{parser.split_path}val.txt',
+                                     transform=transforms.Compose([Normalizer(), Augmenter(), Resizer()],
+                                     category = CATEGORY))
+    elif parser.dataset == 'coco':
 
         if parser.coco_path is None:
             raise ValueError('Must provide --coco_path when training on COCO,')
@@ -87,16 +99,18 @@ def main(args=None):
     else:
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
 
-    use_gpu = True
+    # TODO, use device? 
+    retinanet = retinanet.cuda()
+    retinanet = torch.nn.DataParallel(retinanet).cuda()
 
-    if use_gpu:
-        if torch.cuda.is_available():
-            retinanet = retinanet.cuda()
+    # if torch.cuda.is_available():
+    #     retinanet = retinanet.cuda()
 
-    if torch.cuda.is_available():
-        retinanet = torch.nn.DataParallel(retinanet).cuda()
-    else:
-        retinanet = torch.nn.DataParallel(retinanet)
+    # if torch.cuda.is_available():
+    #     retinanet = retinanet.cuda()
+    #     retinanet = torch.nn.DataParallel(retinanet).cuda()
+    # else:
+    #     retinanet = torch.nn.DataParallel(retinanet)
 
     retinanet.training = True
 
@@ -155,16 +169,17 @@ def main(args=None):
                 print(e)
                 continue
 
-        if parser.dataset == 'coco':
-
+        
+        if parser.dataset == 'kitti':
             print('Evaluating dataset')
+            mAP = kitti_eval.evaluate(dataset_val, retinanet)
 
+        elif parser.dataset == 'coco':
+            print('Evaluating dataset')
             coco_eval.evaluate_coco(dataset_val, retinanet)
 
         elif parser.dataset == 'csv' and parser.csv_val is not None:
-
             print('Evaluating dataset')
-
             mAP = csv_eval.evaluate(dataset_val, retinanet)
 
         scheduler.step(np.mean(epoch_loss))

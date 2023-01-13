@@ -19,6 +19,163 @@ import skimage
 
 from PIL import Image
 
+# My kitti toolkit
+import sys
+sys.path.insert(0, "/home/lab530/KenYu/ml_toolkit/kitti/") 
+from util_kitti import kitti_label_file_parser
+
+class KittiDataset(Dataset):
+    """Kitti dataset."""
+
+    def __init__(self, root_dir, split_path = None, transform = None, category = None):
+        """
+        Args:
+            root_dir (string): KITTI directory.
+            transform (callable, optional): Optional transform to be applied
+                on a sample.
+        """
+        self.root_dir = root_dir
+        self.split_path = split_path
+        self.transform = transform
+        self.category = category
+
+        # Load split
+        with open(split_path, 'r') as f:
+            lines = f.read().splitlines()
+            img_names = list(lines for lines in lines if lines) # Delete empty lines
+
+        # Load image 
+        self.imgs = []
+        for img_name in img_names:
+            path = os.path.join(split_path, 'training', 'image_2', img_name + ".png")
+            
+            img = skimage.io.imread(path)
+            img.astype(np.float32)/255.0
+
+            self.imgs.append(img)
+
+        # Load annotation
+        self.labels = [] # np.zeros((0, 5))
+
+        for img_name in img_names:
+            # TODO  add 3D obj information
+            objs = kitti_label_file_parser( os.path.join(root_dir , 'training', 'label_2', img_name + ".txt"), is_transform = False)
+            
+            # parse annotations
+            # coco_annotations = self.coco.loadAnns(annotations_ids)
+
+            annos = np.zeros((0, 5))
+            for obj in objs:
+                anno = np.array([obj.xmin, obj.ymin, obj.xmax, obj.ymax, 
+                                 category.index(obj.category)])
+                # annotation        = np.zeros((1, 5))
+                # annotation[0, :4] = a['bbox']
+                # annotation[0, 4]  = self.coco_label_to_label(a['category_id'])
+                # annotations       = np.append(annotations, annotation, axis=0)
+                annos = np.append(annos, anno, axis=0) # TODO, i think this will be very slow
+            
+            self.labels.append(annos)
+            # # transform from [x, y, w, h] to [x1, y1, x2, y2]
+            # annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
+            # annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
+
+
+        # self.coco      = COCO(os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json'))
+        # self.image_ids = self.coco.getImgIds()
+
+        #     self.load_classes()
+
+        # def load_classes(self):
+        # load class names (name -> label)
+        
+        
+        # categories = self.coco.loadCats(self.coco.getCatIds())
+        # categories.sort(key=lambda x: x['id'])
+
+        # self.classes             = {}
+        # self.coco_labels         = {}
+        # self.coco_labels_inverse = {}
+        # for c in categories:
+        #     self.coco_labels[len(self.classes)] = c['id']
+        #     self.coco_labels_inverse[c['id']] = len(self.classes)
+        #     self.classes[c['name']] = len(self.classes)
+
+        # also load the reverse (label -> name)
+        # self.labels = {}
+        # for key, value in self.classes.items():
+        #     self.labels[value] = key
+
+    def __len__(self):
+        return len(self.image_ids)
+
+    def __getitem__(self, idx):
+
+        # img = self.load_image(idx)
+        # annot = self.load_annotations(idx)
+        # sample = {'img': img, 'annot': annot}
+        sample = {'img': self.imgs[idx], 'annot': self.labels[idx]}
+        if self.transform:
+            sample = self.transform(sample)
+        return sample
+
+    def load_image(self, image_index):
+        return self.imgs.image_index
+
+        # image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
+        # path       = os.path.join(self.root_dir, 'images', self.set_name, image_info['file_name'])
+        # img = skimage.io.imread(path)
+
+        # if len(img.shape) == 2:
+        #     img = skimage.color.gray2rgb(img)
+
+        # return img.astype(np.float32)/255.0
+
+    def load_annotations(self, image_index):
+        return self.labels.image_index
+        # # get ground truth annotations
+        # annotations_ids = self.coco.getAnnIds(imgIds=self.image_ids[image_index], iscrowd=False)
+        # annotations     = np.zeros((0, 5))
+
+        # # some images appear to miss annotations (like image with id 257034)
+        # if len(annotations_ids) == 0:
+        #     return annotations
+
+        # # parse annotations
+        # coco_annotations = self.coco.loadAnns(annotations_ids)
+        # for idx, a in enumerate(coco_annotations):
+
+        #     # some annotations have basically no width / height, skip them
+        #     if a['bbox'][2] < 1 or a['bbox'][3] < 1:
+        #         continue
+
+        #     annotation        = np.zeros((1, 5))
+        #     annotation[0, :4] = a['bbox']
+        #     annotation[0, 4]  = self.coco_label_to_label(a['category_id'])
+        #     annotations       = np.append(annotations, annotation, axis=0)
+
+        # # transform from [x, y, w, h] to [x1, y1, x2, y2]
+        # annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
+        # annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
+
+        # return annotations
+
+    # def coco_label_to_label(self, coco_label):
+    #     return self.coco_labels_inverse[coco_label]
+
+
+    # def label_to_coco_label(self, label):
+    #     return self.coco_labels[label]
+
+    def image_aspect_ratio(self, image_index):
+        # image = self.coco.loadImgs(self.image_ids[image_index])[0]
+        # return float(image['width']) / float(image['height'])
+        img_h, img_w, _ = self.imgs[image_index].shape
+        return float(img_w) / float(img_h)
+
+    def num_classes(self):
+        return self.category
+        # return 80
+
 
 class CocoDataset(Dataset):
     """Coco dataset."""
