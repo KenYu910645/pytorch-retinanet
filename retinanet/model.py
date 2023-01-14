@@ -6,6 +6,7 @@ from torchvision.ops import nms
 from retinanet.utils import BasicBlock, Bottleneck, BBoxTransform, ClipBoxes
 from retinanet.anchors import Anchors
 from retinanet import losses
+from retinanet.config import DEVICE
 
 model_urls = {
     'resnet18': 'https://download.pytorch.org/models/resnet18-5c106cde.pth',
@@ -14,7 +15,6 @@ model_urls = {
     'resnet101': 'https://download.pytorch.org/models/resnet101-5d3b4d8f.pth',
     'resnet152': 'https://download.pytorch.org/models/resnet152-b121ed2d.pth',
 }
-
 
 class PyramidFeatures(nn.Module):
     def __init__(self, C3_size, C4_size, C5_size, feature_size=256):
@@ -235,23 +235,41 @@ class ResNet(nn.Module):
         else:
             img_batch = inputs
 
-        x = self.conv1(img_batch)
+        # print(f"img_batch = {img_batch.shape}") # torch.Size([1, 3, 384, 1280])
+        x = self.conv1(img_batch) # 1/2
         x = self.bn1(x)
         x = self.relu(x)
-        x = self.maxpool(x)
+        x = self.maxpool(x) # 1/4
+        
+        # print(f"x = {x.shape}") # x = torch.Size([1, 64, 96, 320])
 
-        x1 = self.layer1(x)
-        x2 = self.layer2(x1)
-        x3 = self.layer3(x2)
-        x4 = self.layer4(x3)
+        x1 = self.layer1(x) # 1/4
+        x2 = self.layer2(x1) # 1/8
+        x3 = self.layer3(x2) # 1/16
+        x4 = self.layer4(x3) # 1/32
+
+        # print(f"x1 = {x1.shape}") # x1 = torch.Size([1, 256, 96, 320])
+        # print(f"x2 = {x2.shape}") # x2 = torch.Size([1, 512, 48, 160])
+        # print(f"x3 = {x3.shape}") # x3 = torch.Size([1, 1024, 24, 80])
+        # print(f"x4 = {x4.shape}") # x4 = torch.Size([1, 2048, 12, 40])
 
         features = self.fpn([x2, x3, x4])
-
+        # print(f"features[0] = {features[0].shape}") # torch.Size([1, 256, 48, 160]) 1/8
+        # print(f"features[1] = {features[1].shape}") # torch.Size([1, 256, 24, 80]) 1/16
+        # print(f"features[2] = {features[2].shape}") # torch.Size([1, 256, 12, 40]) 1/32
+        # print(f"features[3] = {features[3].shape}") # torch.Size([1, 256, 6, 20]) 1/64
+        # print(f"features[4] = {features[4].shape}") # torch.Size([1, 256, 3, 10]) 1/128
+        
         regression = torch.cat([self.regressionModel(feature) for feature in features], dim=1)
-
+        # ( 48*160 + 24*80 + 12*40 + 6*20 + 3*10 ) * 9 = 92070
+        # print(f"regression = {regression.shape}") # torch.Size([1, 92070, 4])
+        
         classification = torch.cat([self.classificationModel(feature) for feature in features], dim=1)
+        # print(f"classification = {classification.shape}") # torch.Size([1, 92070, 1])
 
+        # TODO generate anchor in real-time, can I accelerate it? 
         anchors = self.anchors(img_batch)
+        # print(f"anchors.shape = {anchors.shape}") # torch.Size([1, 92070, 4])
 
         if self.training:
             return self.focalLoss(classification, regression, anchors, annotations)
@@ -265,10 +283,9 @@ class ResNet(nn.Module):
             finalAnchorBoxesIndexes = torch.Tensor([]).long()
             finalAnchorBoxesCoordinates = torch.Tensor([])
 
-            if torch.cuda.is_available():
-                finalScores = finalScores.cuda()
-                finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.cuda()
-                finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.cuda()
+            finalScores = finalScores.to(DEVICE)
+            finalAnchorBoxesIndexes = finalAnchorBoxesIndexes.to(DEVICE)
+            finalAnchorBoxesCoordinates = finalAnchorBoxesCoordinates.to(DEVICE)
 
             for i in range(classification.shape[2]):
                 scores = torch.squeeze(classification[:, :, i])
@@ -288,8 +305,7 @@ class ResNet(nn.Module):
 
                 finalScores = torch.cat((finalScores, scores[anchors_nms_idx]))
                 finalAnchorBoxesIndexesValue = torch.tensor([i] * anchors_nms_idx.shape[0])
-                if torch.cuda.is_available():
-                    finalAnchorBoxesIndexesValue = finalAnchorBoxesIndexesValue.cuda()
+                finalAnchorBoxesIndexesValue = finalAnchorBoxesIndexesValue.to(DEVICE)
 
                 finalAnchorBoxesIndexes = torch.cat((finalAnchorBoxesIndexes, finalAnchorBoxesIndexesValue))
                 finalAnchorBoxesCoordinates = torch.cat((finalAnchorBoxesCoordinates, anchorBoxes[anchors_nms_idx]))

@@ -18,32 +18,25 @@ from retinanet import coco_eval
 from retinanet import csv_eval
 from retinanet import kitti_eval
 
+from retinanet.config import *
+
 assert torch.__version__.split('.')[0] == '1'
 
-# TODO, for debugging
-os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
+# for debugging
+# os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
 print('CUDA available: {}'.format(torch.cuda.is_available()))
 
-BATCH_SIZE = 8
-NUMBER_WORKERS = 8
-EXP_NAME = "2D_detection"
-CATEGORY = ['Car']
-
-OUTPUT_DIR = f"checkpoint/{EXP_NAME}"
 print("Clean output directory : " + OUTPUT_DIR)
 rmtree(OUTPUT_DIR, ignore_errors=True)
 os.mkdir(OUTPUT_DIR)
-
-# TODO load pre-trained model weight
-PATH_TO_WEIGHTS = "checkpoint/2D_detection/epoch3.pt"
 
 def main(args=None):
     parser = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
 
     parser.add_argument('--dataset', help='Dataset type, must be one of csv or coco.', default='kitti')
     parser.add_argument('--kitti_path', help='Path to KITTI directory', default='/home/lab530/KenYu/kitti/')
-    parser.add_argument('--split_path', help='Path to KITTI directory', default='/home/lab530/KenYu/visualDet3D/visualDet3D/data/kitti/chen_split/')
+    # parser.add_argument('--split_path', help='Path to KITTI directory', default='/home/lab530/KenYu/visualDet3D/visualDet3D/data/kitti/debug_split/')
     
     parser.add_argument('--coco_path', help='Path to COCO directory')
     parser.add_argument('--csv_train', help='Path to file containing training annotations (see readme)')
@@ -57,10 +50,10 @@ def main(args=None):
 
     # Create the data loaders
     if parser.dataset == 'kitti':
-        dataset_train = KittiDataset(parser.kitti_path, split_path=f'{parser.split_path}train.txt',
+        dataset_train = KittiDataset(parser.kitti_path, split_path=f'{SPLIT_PATH}train.txt',
                                      transform=transforms.Compose([Normalizer(), HorizontalFlipping(), KittiResizer()]),
                                      categories = CATEGORY)
-        dataset_val   = KittiDataset(parser.kitti_path, split_path=f'{parser.split_path}val.txt',
+        dataset_val   = KittiDataset(parser.kitti_path, split_path=f'{SPLIT_PATH}val.txt',
                                      transform=transforms.Compose([Normalizer(), KittiResizer()]),
                                      categories = CATEGORY)
     elif parser.dataset == 'coco':
@@ -116,46 +109,48 @@ def main(args=None):
     else:
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
 
+    
+    
     # Load model weight
     if os.path.exists(PATH_TO_WEIGHTS):
         print(f"Use pretrained model at {PATH_TO_WEIGHTS}")
-        retinanet.load_state_dict(torch.load(PATH_TO_WEIGHTS))
+        checkpoint = torch.load(PATH_TO_WEIGHTS)
+        retinanet.load_state_dict(checkpoint['model_state_dict'])
+        # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        # print(checkpoint['optimizer_state_dict'])
+        # retinanet.load_state_dict(torch.load(PATH_TO_WEIGHTS))
     else:
         print(f"Cannot find pretrain model at {PATH_TO_WEIGHTS}")
-
-    retinanet = retinanet.cuda()
-    retinanet = torch.nn.DataParallel(retinanet).cuda()
     
+    retinanet = retinanet.to(DEVICE)
+    # retinanet = torch.nn.DataParallel(retinanet).cuda()
     retinanet.training = True
 
     optimizer = optim.Adam(retinanet.parameters(), lr=1e-5)
-
     scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
 
     loss_hist = collections.deque(maxlen=500)
 
     retinanet.train()
-    retinanet.module.freeze_bn()
+    retinanet.freeze_bn() # retinanet.module.freeze_bn()
 
     print('Num training images: {}'.format(len(dataset_train)))
 
     for epoch_num in range(parser.epochs):
 
         retinanet.train()
-        retinanet.module.freeze_bn()
+        retinanet.freeze_bn() # retinanet.module.freeze_bn()
 
         epoch_loss = []
 
+        # print(next(retinanet.parameters()).device) # cuda:1
         for iter_num, data in enumerate(dataloader_train):
             # print(data['img'].shape) # torch.Size([8, 3, 384, 1280])
             try:
                 optimizer.zero_grad()
+                
+                classification_loss, regression_loss = retinanet([data['img'].to(DEVICE).float(), data['annot'].to(DEVICE)])
 
-                if torch.cuda.is_available():
-                    classification_loss, regression_loss = retinanet([data['img'].cuda().float(), data['annot']])
-                else:
-                    classification_loss, regression_loss = retinanet([data['img'].float(), data['annot']])
-                    
                 classification_loss = classification_loss.mean()
                 regression_loss = regression_loss.mean()
 
@@ -184,26 +179,34 @@ def main(args=None):
                 print(e)
                 continue
 
-        
-        if parser.dataset == 'kitti':
-            print('Evaluating dataset')
-            mAP = kitti_eval.evaluate(dataset_val, retinanet)
+        if (epoch_num + 1) % SAVE_EPOCH == 0:
+            # torch.save(retinanet.module, f'{OUTPUT_DIR}/epoch{epoch_num}.pt')
+            # torch.save(retinanet, f'{OUTPUT_DIR}/epoch{epoch_num}.pt')
+            torch.save({
+                        'model_state_dict': retinanet.state_dict(),
+                        'optimizer_state_dict': optimizer.state_dict(),
+                        }, f'{OUTPUT_DIR}/epoch{epoch_num}.pt')
 
-        elif parser.dataset == 'coco':
-            print('Evaluating dataset')
-            coco_eval.evaluate_coco(dataset_val, retinanet)
+            print(f"Saved checkpoint to {OUTPUT_DIR}/epoch{epoch_num}.pt")
 
-        elif parser.dataset == 'csv' and parser.csv_val is not None:
-            print('Evaluating dataset')
-            mAP = csv_eval.evaluate(dataset_val, retinanet)
+        if (epoch_num + 1) % VALID_EPOCH == 0:
+            if parser.dataset == 'kitti':
+                print('Evaluating dataset')
+                mAP = kitti_eval.evaluate(dataset_val, retinanet)
+
+            elif parser.dataset == 'coco':
+                print('Evaluating dataset')
+                coco_eval.evaluate_coco(dataset_val, retinanet)
+
+            elif parser.dataset == 'csv' and parser.csv_val is not None:
+                print('Evaluating dataset')
+                mAP = csv_eval.evaluate(dataset_val, retinanet)
 
         scheduler.step(np.mean(epoch_loss))
 
-        torch.save(retinanet.module, f'{OUTPUT_DIR}/epoch{epoch_num}.pt')
-
     retinanet.eval()
 
-    torch.save(retinanet, f'{OUTPUT_DIR}/model_final.pt')
+    # torch.save(retinanet, f'{OUTPUT_DIR}/model_final.pt')
 
 
 if __name__ == '__main__':

@@ -5,6 +5,7 @@ import json
 import os
 import matplotlib.pyplot as plt
 import torch
+from retinanet.config import DEVICE
 
 def compute_overlap(a, b):
     """
@@ -82,24 +83,22 @@ def _get_detections(dataset, retinanet, score_threshold=0.05, max_detections=100
         for index in range(len(dataset)):
             data = dataset[index]
             scale_h, scale_w = data['scale']
+            # print(dataset[0]['annot'])
             
-            scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
-            # # run network
-            # if torch.cuda.is_available():
-            #     scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
-            # else:
-            #     scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).float().unsqueeze(dim=0))
-            
+            # run network
+            scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).to(DEVICE).float().unsqueeze(dim=0))
+
             # TODO using GPU Tensor should be faster
             scores = scores.cpu().numpy()
             labels = labels.cpu().numpy()
             boxes  = boxes.cpu().numpy()
 
             # correct boxes for image scale
-            boxes[:, 0] /= scale_w
-            boxes[:, 1] /= scale_h
-            boxes[:, 2] /= scale_w
-            boxes[:, 3] /= scale_h
+            # print(len(boxes))
+            # boxes[:, 0] /= scale_w
+            # boxes[:, 1] /= scale_h
+            # boxes[:, 2] /= scale_w
+            # boxes[:, 3] /= scale_h
 
             # select indices which have a score above the threshold
             indices = np.where(scores > score_threshold)[0]
@@ -114,6 +113,13 @@ def _get_detections(dataset, retinanet, score_threshold=0.05, max_detections=100
                 image_boxes      = boxes[indices[scores_sort], :]
                 image_scores     = scores[scores_sort]
                 image_labels     = labels[indices[scores_sort]]
+                
+                # Untransform detection boudning box
+                image_boxes[:, 0] /= scale_w
+                image_boxes[:, 1] /= scale_h
+                image_boxes[:, 2] /= scale_w
+                image_boxes[:, 3] /= scale_h
+
                 image_detections = np.concatenate([image_boxes, np.expand_dims(image_scores, axis=1), np.expand_dims(image_labels, axis=1)], axis=1)
 
                 # print(f"image_boxes = {image_boxes}")
@@ -127,6 +133,16 @@ def _get_detections(dataset, retinanet, score_threshold=0.05, max_detections=100
                 for label in range(dataset.num_classes()):
                     all_detections[index][label] = np.zeros((0, 5))
 
+            # Output prection result to .txt
+            if save_path != None:
+                with open(f"{save_path}/{dataset.img_names[index]}.txt", 'w') as f:
+                    # Only output car detection
+                    s = ""
+                    for x1, y1, x2, y2, score in all_detections[index][0]:
+                        # 'category, truncated, occluded alpha, xmin, ymin, xmax, ymax, height, width, length, x3d, y3d, z3d, rot_y, score]
+                        # 1         2          3        4      5     6     7     8     9       10     11      12   13   14   15     16
+                        s += f"Car NA NA NA {x1} {y1} {x2} {y2} NA NA NA NA NA NA NA {score}\n"
+                    f.write(s)
             print('{}/{}'.format(index + 1, len(dataset)), end='\r')
 
     return all_detections
@@ -161,7 +177,7 @@ def evaluate(
     iou_threshold=0.5,
     score_threshold=0.05,
     max_detections=100,
-    save_path=None
+    save_path=None,
 ):
     """ Evaluate a given dataset using a given retinanet.
     # Arguments
@@ -174,8 +190,6 @@ def evaluate(
     # Returns
         A dict mapping class names to mAP scores.
     """
-
-
 
     # gather all detections and annotations
     all_detections     = _get_detections(generator, retinanet, score_threshold=score_threshold, max_detections=max_detections, save_path=save_path)
@@ -245,20 +259,16 @@ def evaluate(
         print("Precision: ", round(precision[-1], 4))
         print("Recall: ", round(recall[-1], 4))
         
-        if save_path!=None:
-            plt.plot(recall,precision)
-            # naming the x axis 
-            plt.xlabel('Recall') 
-            # naming the y axis 
-            plt.ylabel('Precision') 
-
-            # giving a title to my graph 
-            plt.title('Precision Recall curve')
-
-            # function to show the plot
-            plt.savefig(save_path+'/'+label_name+'_precision_recall.jpg')
-
-
+        # if save_path!=None:
+        #     plt.plot(recall,precision)
+        #     # naming the x axis 
+        #     plt.xlabel('Recall')
+        #     # naming the y axis 
+        #     plt.ylabel('Precision')
+        #     # giving a title to my graph 
+        #     plt.title('Precision Recall curve')
+        #     # function to show the plot
+        #     plt.savefig(save_path+'/'+label_name+'_precision_recall.jpg')
 
     return average_precisions
 

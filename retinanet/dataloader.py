@@ -43,11 +43,11 @@ class KittiDataset(Dataset):
         # Load split file
         with open(split_path, 'r') as f:
             lines = f.read().splitlines()
-            img_names = list(lines for lines in lines if lines) # Delete empty lines
+            self.img_names = list(lines for lines in lines if lines) # Delete empty lines
 
         self.imgs = []
         self.labels = []
-        for i, img_name in enumerate(img_names):
+        for i, img_name in enumerate(self.img_names):
             # Load annotation,  TODO  add 3D obj information
             objs = kitti_label_file_parser( os.path.join(root_dir , 'training', 'label_2', img_name + ".txt"), is_transform = False)
             annos = []
@@ -68,7 +68,7 @@ class KittiDataset(Dataset):
             self.imgs.append(img)
 
             # Print loading progress
-            print('{}/{}'.format(i+1, len(img_names)), end='\r')
+            print('{}/{}'.format(i+1, len(self.img_names)), end='\r')
 
     def __len__(self):
         return len(self.imgs)
@@ -91,16 +91,8 @@ class KittiDataset(Dataset):
 
     def label_to_name(self, label):
         return self.categories[label]
-    
-    # def coco_label_to_label(self, coco_label):
-    #     return self.coco_labels_inverse[coco_label]
-
-    # def label_to_coco_label(self, label):
-    #     return self.coco_labels[label]
 
     def image_aspect_ratio(self, image_index):
-        # image = self.coco.loadImgs(self.image_ids[image_index])[0]
-        # return float(image['width']) / float(image['height'])
         img_h, img_w, _ = self.imgs[image_index].shape
         return float(img_w) / float(img_h)
 
@@ -454,7 +446,7 @@ class Resizer(object):
         new_image = np.zeros((rows + pad_w, cols + pad_h, cns)).astype(np.float32)
         new_image[:rows, :cols, :] = image.astype(np.float32)
 
-        annots[:, :4] *= scale
+        annots[:, :4] *= scale 
 
         return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale}
 
@@ -473,13 +465,14 @@ class KittiResizer(object):
         new_image = skimage.transform.resize(image, (img_new_h, img_new_w))
 
         # Deal with annotations
-        annots[:, 0] *= scale_w
-        annots[:, 1] *= scale_h
-        annots[:, 2] *= scale_w
-        annots[:, 3] *= scale_h
+        new_annots = annots.copy()
+        new_annots[:, 0] *= scale_w
+        new_annots[:, 1] *= scale_h
+        new_annots[:, 2] *= scale_w
+        new_annots[:, 3] *= scale_h
 
         # TODO maybe create torch at first, don't create it every iteration
-        return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': (scale_h, scale_w)}
+        return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(new_annots), 'scale': (scale_h, scale_w)}
 
 class HorizontalFlipping(object):
     """Convert ndarrays in sample to Tensors."""
