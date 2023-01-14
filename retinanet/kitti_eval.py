@@ -81,19 +81,25 @@ def _get_detections(dataset, retinanet, score_threshold=0.05, max_detections=100
 
         for index in range(len(dataset)):
             data = dataset[index]
-            scale = data['scale']
-
-            # run network
-            if torch.cuda.is_available():
-                scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
-            else:
-                scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).float().unsqueeze(dim=0))
+            scale_h, scale_w = data['scale']
+            
+            scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
+            # # run network
+            # if torch.cuda.is_available():
+            #     scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).cuda().float().unsqueeze(dim=0))
+            # else:
+            #     scores, labels, boxes = retinanet(data['img'].permute(2, 0, 1).float().unsqueeze(dim=0))
+            
+            # TODO using GPU Tensor should be faster
             scores = scores.cpu().numpy()
             labels = labels.cpu().numpy()
             boxes  = boxes.cpu().numpy()
 
             # correct boxes for image scale
-            boxes /= scale
+            boxes[:, 0] /= scale_w
+            boxes[:, 1] /= scale_h
+            boxes[:, 2] /= scale_w
+            boxes[:, 3] /= scale_h
 
             # select indices which have a score above the threshold
             indices = np.where(scores > score_threshold)[0]
@@ -110,6 +116,9 @@ def _get_detections(dataset, retinanet, score_threshold=0.05, max_detections=100
                 image_labels     = labels[indices[scores_sort]]
                 image_detections = np.concatenate([image_boxes, np.expand_dims(image_scores, axis=1), np.expand_dims(image_labels, axis=1)], axis=1)
 
+                # print(f"image_boxes = {image_boxes}")
+                # print(f"image_scores = {image_scores}")
+                # print(f"image_labels = {image_labels}")
                 # copy detections to all_detections
                 for label in range(dataset.num_classes()):
                     all_detections[index][label] = image_detections[image_detections[:, -1] == label, :-1]
@@ -141,7 +150,6 @@ def _get_annotations(generator):
         # copy detections to all_annotations
         for label in range(generator.num_classes()):
             all_annotations[i][label] = annotations[annotations[:, 4] == label, :4].copy()
-
         print('{}/{}'.format(i + 1, len(generator)), end='\r')
 
     return all_annotations
@@ -170,7 +178,6 @@ def evaluate(
 
 
     # gather all detections and annotations
-
     all_detections     = _get_detections(generator, retinanet, score_threshold=score_threshold, max_detections=max_detections, save_path=save_path)
     all_annotations    = _get_annotations(generator)
 
@@ -234,9 +241,9 @@ def evaluate(
     print('\nmAP:')
     for label in range(generator.num_classes()):
         label_name = generator.label_to_name(label)
-        print('{}: {}'.format(label_name, average_precisions[label][0]))
-        print("Precision: ",precision[-1])
-        print("Recall: ",recall[-1])
+        print('{}: AP = {}'.format(label_name, round(average_precisions[label][0], 4)))
+        print("Precision: ", round(precision[-1], 4))
+        print("Recall: ", round(recall[-1], 4))
         
         if save_path!=None:
             plt.plot(recall,precision)
@@ -246,7 +253,7 @@ def evaluate(
             plt.ylabel('Precision') 
 
             # giving a title to my graph 
-            plt.title('Precision Recall curve') 
+            plt.title('Precision Recall curve')
 
             # function to show the plot
             plt.savefig(save_path+'/'+label_name+'_precision_recall.jpg')

@@ -27,7 +27,7 @@ from util_kitti import kitti_label_file_parser
 class KittiDataset(Dataset):
     """Kitti dataset."""
 
-    def __init__(self, root_dir, split_path = None, transform = None, category = None):
+    def __init__(self, root_dir, split_path = None, transform = None, categories = None):
         """
         Args:
             root_dir (string): KITTI directory.
@@ -37,131 +37,63 @@ class KittiDataset(Dataset):
         self.root_dir = root_dir
         self.split_path = split_path
         self.transform = transform
-        self.category = category
+        self.categories = categories
 
-        # Load split
+        print(f"Loading KittiData according to {split_path}")
+        # Load split file
         with open(split_path, 'r') as f:
             lines = f.read().splitlines()
             img_names = list(lines for lines in lines if lines) # Delete empty lines
 
-        # Load image 
         self.imgs = []
-        for img_name in img_names:
-            path = os.path.join(split_path, 'training', 'image_2', img_name + ".png")
-            
+        self.labels = []
+        for i, img_name in enumerate(img_names):
+            # Load annotation,  TODO  add 3D obj information
+            objs = kitti_label_file_parser( os.path.join(root_dir , 'training', 'label_2', img_name + ".txt"), is_transform = False)
+            annos = []
+            for obj in objs:
+                # Filter objects that's not belong to category
+                if obj.category in self.categories:
+                    annos.append([float(obj.xmin), float(obj.ymin), float(obj.xmax), float(obj.ymax), 
+                                  self.categories.index(obj.category)])
+            # Ignore emtpy image
+            if len(annos) == 0: continue
+            annos = np.array(annos)
+            self.labels.append(annos)
+
+            # Load image 
+            path = os.path.join(root_dir, 'training', 'image_2', img_name + ".png")
             img = skimage.io.imread(path)
             img.astype(np.float32)/255.0
-
             self.imgs.append(img)
 
-        # Load annotation
-        self.labels = [] # np.zeros((0, 5))
-
-        for img_name in img_names:
-            # TODO  add 3D obj information
-            objs = kitti_label_file_parser( os.path.join(root_dir , 'training', 'label_2', img_name + ".txt"), is_transform = False)
-            
-            # parse annotations
-            # coco_annotations = self.coco.loadAnns(annotations_ids)
-
-            annos = np.zeros((0, 5))
-            for obj in objs:
-                anno = np.array([obj.xmin, obj.ymin, obj.xmax, obj.ymax, 
-                                 category.index(obj.category)])
-                # annotation        = np.zeros((1, 5))
-                # annotation[0, :4] = a['bbox']
-                # annotation[0, 4]  = self.coco_label_to_label(a['category_id'])
-                # annotations       = np.append(annotations, annotation, axis=0)
-                annos = np.append(annos, anno, axis=0) # TODO, i think this will be very slow
-            
-            self.labels.append(annos)
-            # # transform from [x, y, w, h] to [x1, y1, x2, y2]
-            # annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
-            # annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
-
-
-        # self.coco      = COCO(os.path.join(self.root_dir, 'annotations', 'instances_' + self.set_name + '.json'))
-        # self.image_ids = self.coco.getImgIds()
-
-        #     self.load_classes()
-
-        # def load_classes(self):
-        # load class names (name -> label)
-        
-        
-        # categories = self.coco.loadCats(self.coco.getCatIds())
-        # categories.sort(key=lambda x: x['id'])
-
-        # self.classes             = {}
-        # self.coco_labels         = {}
-        # self.coco_labels_inverse = {}
-        # for c in categories:
-        #     self.coco_labels[len(self.classes)] = c['id']
-        #     self.coco_labels_inverse[c['id']] = len(self.classes)
-        #     self.classes[c['name']] = len(self.classes)
-
-        # also load the reverse (label -> name)
-        # self.labels = {}
-        # for key, value in self.classes.items():
-        #     self.labels[value] = key
+            # Print loading progress
+            print('{}/{}'.format(i+1, len(img_names)), end='\r')
 
     def __len__(self):
-        return len(self.image_ids)
+        return len(self.imgs)
 
     def __getitem__(self, idx):
-
-        # img = self.load_image(idx)
-        # annot = self.load_annotations(idx)
-        # sample = {'img': img, 'annot': annot}
-        sample = {'img': self.imgs[idx], 'annot': self.labels[idx]}
         if self.transform:
-            sample = self.transform(sample)
-        return sample
+            return self.transform({'img': self.imgs[idx], 'annot': self.labels[idx]})
+        else:
+            print("[ERROR] No transformation GG!!")
+            raise ValueError
 
     def load_image(self, image_index):
-        return self.imgs.image_index
-
-        # image_info = self.coco.loadImgs(self.image_ids[image_index])[0]
-        # path       = os.path.join(self.root_dir, 'images', self.set_name, image_info['file_name'])
-        # img = skimage.io.imread(path)
-
-        # if len(img.shape) == 2:
-        #     img = skimage.color.gray2rgb(img)
-
-        # return img.astype(np.float32)/255.0
+        return self.imgs[image_index]
 
     def load_annotations(self, image_index):
-        return self.labels.image_index
-        # # get ground truth annotations
-        # annotations_ids = self.coco.getAnnIds(imgIds=self.image_ids[image_index], iscrowd=False)
-        # annotations     = np.zeros((0, 5))
+        return self.labels[image_index]
 
-        # # some images appear to miss annotations (like image with id 257034)
-        # if len(annotations_ids) == 0:
-        #     return annotations
+    def name_to_label(self, name):
+        return self.categories.index(name)
 
-        # # parse annotations
-        # coco_annotations = self.coco.loadAnns(annotations_ids)
-        # for idx, a in enumerate(coco_annotations):
-
-        #     # some annotations have basically no width / height, skip them
-        #     if a['bbox'][2] < 1 or a['bbox'][3] < 1:
-        #         continue
-
-        #     annotation        = np.zeros((1, 5))
-        #     annotation[0, :4] = a['bbox']
-        #     annotation[0, 4]  = self.coco_label_to_label(a['category_id'])
-        #     annotations       = np.append(annotations, annotation, axis=0)
-
-        # # transform from [x, y, w, h] to [x1, y1, x2, y2]
-        # annotations[:, 2] = annotations[:, 0] + annotations[:, 2]
-        # annotations[:, 3] = annotations[:, 1] + annotations[:, 3]
-
-        # return annotations
-
+    def label_to_name(self, label):
+        return self.categories[label]
+    
     # def coco_label_to_label(self, coco_label):
     #     return self.coco_labels_inverse[coco_label]
-
 
     # def label_to_coco_label(self, label):
     #     return self.coco_labels[label]
@@ -173,8 +105,7 @@ class KittiDataset(Dataset):
         return float(img_w) / float(img_h)
 
     def num_classes(self):
-        return self.category
-        # return 80
+        return len(self.categories)
 
 
 class CocoDataset(Dataset):
@@ -494,7 +425,7 @@ def collater(data):
     return {'img': padded_imgs, 'annot': annot_padded, 'scale': scales}
 
 class Resizer(object):
-    """Convert ndarrays in sample to Tensors."""
+    """Convert ndarrays in sample to Tensors.""" # 1280*384
 
     def __call__(self, sample, min_side=608, max_side=1024):
         image, annots = sample['img'], sample['annot']
@@ -527,10 +458,32 @@ class Resizer(object):
 
         return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': scale}
 
-
-class Augmenter(object):
+class KittiResizer(object):
     """Convert ndarrays in sample to Tensors."""
 
+    def __call__(self, sample):
+        # TODO how to preserve aspect ratio
+        image, annots = sample['img'], sample['annot']
+        img_new_h, img_new_w = (384, 1280)
+        img_ori_h, img_ori_w, _ = image.shape
+
+        scale_h, scale_w = (img_new_h / img_ori_h, img_new_w / img_ori_w)
+
+        # resize the image with the computed scale
+        new_image = skimage.transform.resize(image, (img_new_h, img_new_w))
+
+        # Deal with annotations
+        annots[:, 0] *= scale_w
+        annots[:, 1] *= scale_h
+        annots[:, 2] *= scale_w
+        annots[:, 3] *= scale_h
+
+        # TODO maybe create torch at first, don't create it every iteration
+        return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(annots), 'scale': (scale_h, scale_w)}
+
+class HorizontalFlipping(object):
+    """Convert ndarrays in sample to Tensors."""
+    # Horizontal Flip
     def __call__(self, sample, flip_x=0.5):
 
         if np.random.rand() < flip_x:
@@ -550,6 +503,7 @@ class Augmenter(object):
             sample = {'img': image, 'annot': annots}
 
         return sample
+# TODO Add photometric pretubtion here
 
 
 class Normalizer(object):
