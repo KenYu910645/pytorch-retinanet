@@ -117,8 +117,11 @@ def main(args=None):
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
 
     # Load model weight
-    print(f"Use pretrained model at {PATH_TO_WEIGHTS}")
-    retinanet.load_state_dict(torch.load(PATH_TO_WEIGHTS))
+    if os.path.exists(PATH_TO_WEIGHTS):
+        print(f"Use pretrained model at {PATH_TO_WEIGHTS}")
+        retinanet.load_state_dict(torch.load(PATH_TO_WEIGHTS))
+    else:
+        print(f"Cannot find pretrain model at {PATH_TO_WEIGHTS}")
 
     retinanet = retinanet.cuda()
     retinanet = torch.nn.DataParallel(retinanet).cuda()
