@@ -22,7 +22,7 @@ from PIL import Image
 # My kitti toolkit
 import sys
 sys.path.insert(0, "/home/lab530/KenYu/ml_toolkit/kitti/") 
-from util_kitti import kitti_label_file_parser
+from util_kitti import kitti_label_file_parser, kitti_calib_file_parser
 
 class KittiDataset(Dataset):
     """Kitti dataset."""
@@ -44,20 +44,25 @@ class KittiDataset(Dataset):
         with open(split_path, 'r') as f:
             lines = f.read().splitlines()
             self.img_names = list(lines for lines in lines if lines) # Delete empty lines
-
+        
         self.imgs = []
         self.labels = []
         for i, img_name in enumerate(self.img_names):
-            # Load annotation,  TODO  add 3D obj information
-            objs = kitti_label_file_parser( os.path.join(root_dir , 'training', 'label_2', img_name + ".txt"), is_transform = False)
+            # Load annotation,  TODO  add 3D obj information here
+            P2 = kitti_calib_file_parser( os.path.join(root_dir , 'training', 'calib', img_name + ".txt"), new_shape_tf = (384, 1280))
+            objs = kitti_label_file_parser( os.path.join(root_dir , 'training', 'label_2', img_name + ".txt"), tf_matrix = P2)
             annos = []
             for obj in objs:
                 # Filter objects that's not belong to category
                 if obj.category in self.categories:
-                    annos.append([float(obj.xmin), float(obj.ymin), float(obj.xmax), float(obj.ymax), 
+                    annos.append([float(obj.xmin), float(obj.ymin), float(obj.xmax), float(obj.ymax),
                                   self.categories.index(obj.category)])
-            # Ignore emtpy image
-            if len(annos) == 0: continue
+            
+            # # Ignore empty training image
+            # if len(annos) == 0:
+            #     print(f"Ignore image : {img_name}")
+            #     continue
+                
             annos = np.array(annos)
             self.labels.append(annos)
 
@@ -74,11 +79,12 @@ class KittiDataset(Dataset):
         return len(self.imgs)
 
     def __getitem__(self, idx):
-        if self.transform:
-            return self.transform({'img': self.imgs[idx], 'annot': self.labels[idx]})
-        else:
-            print("[ERROR] No transformation GG!!")
-            raise ValueError
+        return self.transform({'img': self.imgs[idx], 'annot': self.labels[idx]})
+        # if self.transform:
+        #     return self.transform({'img': self.imgs[idx], 'annot': self.labels[idx]})
+        # else:
+        #     print("[ERROR] No transformation GG!!")
+        #     raise ValueError
 
     def load_image(self, image_index):
         return self.imgs[image_index]
@@ -378,12 +384,31 @@ class CSVDataset(Dataset):
         return float(image.width) / float(image.height)
 
 
+def kitti_collater(data):
+    annots = [s['annot'] for s in data]
+    scales = [s['scale'] for s in data]
+    
+    batch_img = torch.cat( [torch.unsqueeze(s['img'], 0) for s in data], 0)
+    batch_img = batch_img.permute(0, 3, 1, 2)
+    
+    max_num_annots = max(annot.shape[0] for annot in annots)
+    if max_num_annots > 0:
+        annot_padded = torch.ones((len(annots), max_num_annots, 5)) * -1
+        for idx, annot in enumerate(annots):
+            #print(annot.shape)
+            if annot.shape[0] > 0:
+                annot_padded[idx, :annot.shape[0], :] = annot
+    else:
+        annot_padded = torch.ones((len(annots), 1, 5)) * -1
+
+    return {'img': batch_img, 'annot': annot_padded, 'scale': scales}
+
+
 def collater(data):
 
     imgs = [s['img'] for s in data]
     annots = [s['annot'] for s in data]
     scales = [s['scale'] for s in data]
-        
     widths = [int(s.shape[0]) for s in imgs]
     heights = [int(s.shape[1]) for s in imgs]
     batch_size = len(imgs)
@@ -466,17 +491,15 @@ class KittiResizer(object):
 
         # Deal with annotations
         new_annots = annots.copy()
-        new_annots[:, 0] *= scale_w
-        new_annots[:, 1] *= scale_h
-        new_annots[:, 2] *= scale_w
-        new_annots[:, 3] *= scale_h
+        if new_annots.shape[0] != 0:
+            new_annots[:, 0] *= scale_w
+            new_annots[:, 1] *= scale_h
+            new_annots[:, 2] *= scale_w
+            new_annots[:, 3] *= scale_h
 
-        # TODO maybe create torch at first, don't create it every iteration
         return {'img': torch.from_numpy(new_image), 'annot': torch.from_numpy(new_annots), 'scale': (scale_h, scale_w)}
 
 class HorizontalFlipping(object):
-    """Convert ndarrays in sample to Tensors."""
-    # Horizontal Flip
     def __call__(self, sample, flip_x=0.5):
 
         if np.random.rand() < flip_x:
@@ -485,13 +508,12 @@ class HorizontalFlipping(object):
 
             rows, cols, channels = image.shape
 
-            x1 = annots[:, 0].copy()
-            x2 = annots[:, 2].copy()
-            
-            x_tmp = x1.copy()
-
-            annots[:, 0] = cols - x2
-            annots[:, 2] = cols - x_tmp
+            if annots.shape[0] != 0:
+                x1 = annots[:, 0].copy()
+                x2 = annots[:, 2].copy()            
+                x_tmp = x1.copy()
+                annots[:, 0] = cols - x2
+                annots[:, 2] = cols - x_tmp
 
             sample = {'img': image, 'annot': annots}
 

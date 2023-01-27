@@ -1,7 +1,7 @@
 import numpy as np
 import torch
 import torch.nn as nn
-from retinanet.config import DEVICE
+from retinanet.config_train import DEVICE
 
 class Anchors(nn.Module):
     def __init__(self, pyramid_levels=None, strides=None, sizes=None, ratios=None, scales=None):
@@ -12,7 +12,7 @@ class Anchors(nn.Module):
         if strides is None:
             self.strides = [2 ** x for x in self.pyramid_levels]
         if sizes is None:
-            self.sizes = [2 ** (x + 2) for x in self.pyramid_levels]
+            self.sizes = [2 ** (x + 2) for x in self.pyramid_levels] # [32, 64, 128, 256, 512]
         if ratios is None:
             self.ratios = np.array([0.5, 1, 2])
         if scales is None:
@@ -23,15 +23,25 @@ class Anchors(nn.Module):
         image_shape = image.shape[2:]
         image_shape = np.array(image_shape)
         image_shapes = [(image_shape + 2 ** x - 1) // (2 ** x) for x in self.pyramid_levels]
+        # print(image_shapes) # [array([ 48, 160]), array([24, 80]), array([12, 40]), array([ 6, 20]), array([ 3, 10])]
 
         # compute anchors over all pyramid levels
         all_anchors = np.zeros((0, 4)).astype(np.float32)
 
         for idx, p in enumerate(self.pyramid_levels):
+            
+            # anchors.shape = (9, 4), every pixel has 9 anchors
             anchors         = generate_anchors(base_size=self.sizes[idx], ratios=self.ratios, scales=self.scales)
+            
+            # Shift anchor to center of every pixel
             shifted_anchors = shift(image_shapes[idx], self.strides[idx], anchors)
-            all_anchors     = np.append(all_anchors, shifted_anchors, axis=0)
-
+            # print(shifted_anchors.shape): (69120, 4) (17280, 4) (4320, 4) (1080, 4) (270, 4)
+            # 69120 = 48*160*9
+            # 17280 = 24*80*9
+            # 4320  = 12*40*9
+            # 1080  = 6*20*9
+            # 270   = 3*10*9
+            all_anchors     = np.append(all_anchors, shifted_anchors, axis=0) # I think it's not very effective
         all_anchors = np.expand_dims(all_anchors, axis=0)
 
         return torch.from_numpy(all_anchors.astype(np.float32)).to(DEVICE)
@@ -46,9 +56,9 @@ def generate_anchors(base_size=16, ratios=None, scales=None):
         ratios = np.array([0.5, 1, 2])
 
     if scales is None:
-        scales = np.array([2 ** 0, 2 ** (1.0 / 3.0), 2 ** (2.0 / 3.0)])
+        scales = np.array([2 ** 0, 2 ** (1.0 / 3.0), 2 ** (2.0 / 3.0)]) # [1, 1.26, 1.587]
 
-    num_anchors = len(ratios) * len(scales)
+    num_anchors = len(ratios) * len(scales) # 9
 
     # initialize output anchors
     anchors = np.zeros((num_anchors, 4))

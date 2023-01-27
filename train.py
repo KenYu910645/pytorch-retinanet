@@ -10,15 +10,14 @@ import torch.optim as optim
 from torchvision import transforms
 
 from retinanet import model
-from retinanet.dataloader import KittiDataset, CocoDataset, CSVDataset, collater, KittiResizer, AspectRatioBasedSampler, HorizontalFlipping, \
+from retinanet.dataloader import KittiDataset, CocoDataset, CSVDataset, kitti_collater, KittiResizer, AspectRatioBasedSampler, HorizontalFlipping, \
     Normalizer
-from torch.utils.data import DataLoader
-
+from torch.utils.data import DataLoader, BatchSampler, RandomSampler
 from retinanet import coco_eval
 from retinanet import csv_eval
 from retinanet import kitti_eval
 
-from retinanet.config import *
+from retinanet.config_train import *
 
 assert torch.__version__.split('.')[0] == '1'
 
@@ -30,6 +29,12 @@ print('CUDA available: {}'.format(torch.cuda.is_available()))
 print("Clean output directory : " + OUTPUT_DIR)
 rmtree(OUTPUT_DIR, ignore_errors=True)
 os.mkdir(OUTPUT_DIR)
+
+# 
+SAVE_PATH = os.path.join(OUTPUT_DIR, 'result')
+print("Clean output directory : " + SAVE_PATH)
+rmtree(SAVE_PATH, ignore_errors=True)
+os.mkdir(SAVE_PATH)
 
 def main(args=None):
     parser = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
@@ -44,14 +49,15 @@ def main(args=None):
     parser.add_argument('--csv_val', help='Path to file containing validation annotations (optional, see readme)')
 
     parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
-    parser.add_argument('--epochs', help='Number of epochs', type=int, default=30) #  default=100
+    # parser.add_argument('--epochs', help='Number of epochs', type=int, default=30) #  default=100
 
     parser = parser.parse_args(args)
 
     # Create the data loaders
     if parser.dataset == 'kitti':
+        # TODO, i temporary disable hisrozontal flipping for simplisity
         dataset_train = KittiDataset(parser.kitti_path, split_path=f'{SPLIT_PATH}train.txt',
-                                     transform=transforms.Compose([Normalizer(), HorizontalFlipping(), KittiResizer()]),
+                                     transform=transforms.Compose([Normalizer(), KittiResizer()]),
                                      categories = CATEGORY)
         dataset_val   = KittiDataset(parser.kitti_path, split_path=f'{SPLIT_PATH}val.txt',
                                      transform=transforms.Compose([Normalizer(), KittiResizer()]),
@@ -87,38 +93,47 @@ def main(args=None):
     else:
         raise ValueError('Dataset type not understood (must be csv or coco), exiting.')
 
-    sampler = AspectRatioBasedSampler(dataset_train, batch_size=BATCH_SIZE, drop_last=False)
-    dataloader_train = DataLoader(dataset_train, num_workers=NUMBER_WORKERS, collate_fn=collater, batch_sampler=sampler)
+    # sampler = AspectRatioBasedSampler(dataset_train, batch_size=BATCH_SIZE, drop_last=False)
+    # sampler_train = BatchSampler(RandomSampler(dataset_train), batch_size=8, drop_last=True)
+    # dataloader_train = DataLoader(dataset_train, num_workers=NUMBER_WORKERS, collate_fn=collater, batch_sampler=sampler_train)
+    # dataloader_train = DataLoader(dataset_train, batch_size=BATCH_SIZE, num_workers=NUMBER_WORKERS, shuffle=True)
+    dataloader_train = DataLoader(dataset_train, batch_size=BATCH_SIZE, num_workers=NUMBER_WORKERS, 
+                                  shuffle=True, pin_memory=True, collate_fn = kitti_collater)
 
-    if dataset_val is not None:
-        sampler_val = AspectRatioBasedSampler(dataset_val, batch_size=1, drop_last=False)
-        dataloader_val = DataLoader(dataset_val, num_workers=NUMBER_WORKERS, collate_fn=collater, batch_sampler=sampler_val)
-        # TODO can dataloader_val be faster?
-    
     # Create the model
     if parser.depth == 18:
         retinanet = model.resnet18(num_classes=dataset_train.num_classes(), pretrained=True)
     elif parser.depth == 34:
         retinanet = model.resnet34(num_classes=dataset_train.num_classes(), pretrained=True)
     elif parser.depth == 50:
-        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True, mode = BACKBONE, device = DEVICE)
     elif parser.depth == 101:
         retinanet = model.resnet101(num_classes=dataset_train.num_classes(), pretrained=True)
     elif parser.depth == 152:
         retinanet = model.resnet152(num_classes=dataset_train.num_classes(), pretrained=True)
     else:
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
-
-    
     
     # Load model weight
     if os.path.exists(PATH_TO_WEIGHTS):
         print(f"Use pretrained model at {PATH_TO_WEIGHTS}")
+
         checkpoint = torch.load(PATH_TO_WEIGHTS)
-        retinanet.load_state_dict(checkpoint['model_state_dict'])
-        # optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
-        # print(checkpoint['optimizer_state_dict'])
-        # retinanet.load_state_dict(torch.load(PATH_TO_WEIGHTS))
+        
+        # Load the whole weight 
+        # retinanet.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Load partial of the pre-train model
+        pretrained_dict = checkpoint['model_state_dict']
+        model_dict = retinanet.state_dict()
+        # Reference: https://discuss.pytorch.org/t/how-to-load-part-of-pre-trained-model/1113/2
+        # 1. filter out unnecessary keys
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        # 2. overwrite entries in the existing state dict
+        model_dict.update(pretrained_dict)
+        # 3. load the new state dict
+        retinanet.load_state_dict(model_dict)
+        
     else:
         print(f"Cannot find pretrain model at {PATH_TO_WEIGHTS}")
     
@@ -126,9 +141,10 @@ def main(args=None):
     # retinanet = torch.nn.DataParallel(retinanet).cuda()
     retinanet.training = True
 
-    optimizer = optim.Adam(retinanet.parameters(), lr=1e-5)
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True)
-
+    optimizer = optim.Adam(retinanet.parameters(), lr=1e-5) # 1e-5
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True) # 3
+    # TODO, try cosineAnneling
+    
     loss_hist = collections.deque(maxlen=500)
 
     retinanet.train()
@@ -136,7 +152,7 @@ def main(args=None):
 
     print('Num training images: {}'.format(len(dataset_train)))
 
-    for epoch_num in range(parser.epochs):
+    for epoch_num in range(NUM_EPOCH):
 
         retinanet.train()
         retinanet.freeze_bn() # retinanet.module.freeze_bn()
@@ -146,38 +162,36 @@ def main(args=None):
         # print(next(retinanet.parameters()).device) # cuda:1
         for iter_num, data in enumerate(dataloader_train):
             # print(data['img'].shape) # torch.Size([8, 3, 384, 1280])
-            try:
-                optimizer.zero_grad()
-                
-                classification_loss, regression_loss = retinanet([data['img'].to(DEVICE).float(), data['annot'].to(DEVICE)])
+            optimizer.zero_grad()
+            
+            classification_loss, regression_loss = retinanet([data['img'].to(DEVICE).float(), 
+                                                              data['annot'].to(DEVICE)])
 
-                classification_loss = classification_loss.mean()
-                regression_loss = regression_loss.mean()
+            classification_loss = classification_loss.mean()
+            regression_loss = regression_loss.mean()
 
-                loss = classification_loss + regression_loss
+            loss = classification_loss + regression_loss
 
-                if bool(loss == 0):
-                    continue
-
-                loss.backward()
-
-                torch.nn.utils.clip_grad_norm_(retinanet.parameters(), 0.1)
-
-                optimizer.step()
-
-                loss_hist.append(float(loss))
-
-                epoch_loss.append(float(loss))
-
-                print(
-                    'Epoch: {} | Iteration: {} | cls_loss: {:1.5f} | reg_loss: {:1.5f} | total_loss: {:1.5f}'.format(
-                        epoch_num, iter_num, float(classification_loss), float(regression_loss), np.mean(loss_hist)))
-
-                del classification_loss
-                del regression_loss
-            except Exception as e:
-                print(e)
+            if bool(loss == 0):
                 continue
+
+            loss.backward()
+
+            torch.nn.utils.clip_grad_norm_(retinanet.parameters(), 0.1)
+
+            optimizer.step()
+            loss_hist.append(float(loss))
+            epoch_loss.append(float(loss))
+
+            for param_group in optimizer.param_groups:
+                lr = param_group['lr']
+            
+            print(
+                'Epoch: {} | Iteration: {} | Learning Rate: {:1.5f}*e^-5 | cls_loss: {:1.5f} | reg_loss: {:1.5f} | total_loss: {:1.5f}'.format(
+                    epoch_num, iter_num, float(lr*100000), float(classification_loss), float(regression_loss), np.mean(loss_hist)))
+
+            del classification_loss
+            del regression_loss
 
         if (epoch_num + 1) % SAVE_EPOCH == 0:
             # torch.save(retinanet.module, f'{OUTPUT_DIR}/epoch{epoch_num}.pt')
@@ -192,7 +206,7 @@ def main(args=None):
         if (epoch_num + 1) % VALID_EPOCH == 0:
             if parser.dataset == 'kitti':
                 print('Evaluating dataset')
-                mAP = kitti_eval.evaluate(dataset_val, retinanet)
+                mAP = kitti_eval.evaluate(dataset_val, retinanet, SAVE_PATH)
 
             elif parser.dataset == 'coco':
                 print('Evaluating dataset')

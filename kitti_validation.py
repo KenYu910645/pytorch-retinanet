@@ -4,50 +4,46 @@ from torchvision import transforms
 from retinanet import model
 from retinanet.dataloader import KittiResizer, Normalizer, KittiDataset
 from retinanet import kitti_eval
-from retinanet.config import CATEGORY, DEVICE, OUTPUT_DIR, SPLIT_PATH
+from retinanet.config_val import *
 import os
 from shutil import rmtree
 assert torch.__version__.split('.')[0] == '1'
 
-# 
-SAVE_PATH = os.path.join(OUTPUT_DIR, 'result')
-print("Clean output directory : " + SAVE_PATH)
-rmtree(SAVE_PATH, ignore_errors=True)
-os.mkdir(SAVE_PATH)
+BACKBONE = "crop_feature_map" # "original" 'crop_feature_map' 'all_feature_map'
+SPLIT_PATH = "/home/lab530/KenYu/visualDet3D/visualDet3D/data/kitti/chen_split/" # "only_one_split " "dummy_exp" "chen_split" "debug_split"
+KITTI_PATH = "/home/lab530/KenYu/kitti/"
+CATEGORY = ['Car']
+IOU_THRESHOLD = 0.5
 
 print('CUDA available: {}'.format(torch.cuda.is_available()))
 
 def main(args=None):
     parser = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
-    parser.add_argument('--dataset', help='Dataset type, must be one of csv or coco.', default='kitti')
-    parser.add_argument('--kitti_path', help='Path to KITTI directory', default='/home/lab530/KenYu/kitti/')
-    # parser.add_argument('--split_path', help='Path to KITTI directory', default='/home/lab530/KenYu/visualDet3D/visualDet3D/data/kitti/debug_split/')
-    parser.add_argument('--depth', help='Resnet depth, must be one of 18, 34, 50, 101, 152', type=int, default=50)
-
-    parser.add_argument('--model_path', help='Path to model', type=str, default="/home/lab530/KenYu/pytorch-retinanet/checkpoint/2D_detection/epoch6.pt")
-    parser.add_argument('--iou_threshold',help='IOU threshold used for evaluation',type=str, default='0.5')
-    
-    
+    parser.add_argument('--weights',type=str, default='/path/to/weights.pt')
+    parser.add_argument('--device' ,type=str, default='cuda:0')
     parser = parser.parse_args(args)
+    
+    # Clean result.txt directory
+    # SAVE_PATH = os.path.join(OUTPUT_DIR, 'result')
+    save_path = os.path.join(os.path.split(parser.weights)[0], os.path.split(parser.weights)[1].split('.')[0] + "_result") 
+    print("Clean output directory : " + save_path)
+    rmtree(save_path, ignore_errors=True)
+    os.mkdir(save_path)
+    
 
-    # Load dataset
-    dataset_val = KittiDataset(parser.kitti_path, split_path=f'{SPLIT_PATH}val.txt',
-                               transform=transforms.Compose([Normalizer(), KittiResizer()]),
-                               categories = CATEGORY)
     # Create the model
-    retinanet = model.resnet50(num_classes=dataset_val.num_classes(), pretrained=True)
-    # retinanet = retinanet.to(DEVICE)
-    # retinanet = torch.load(parser.model_path)
+    retinanet = model.resnet50(num_classes=len(CATEGORY), pretrained=True, mode = BACKBONE, device = parser.device)
 
     # Load model weight
-    if os.path.exists(parser.model_path):
-        print(f"Load weight at {parser.model_path}")
-        checkpoint = torch.load(parser.model_path)
+    if os.path.exists(parser.weights):
+        print(f"Load weight at {parser.weights}")
+        checkpoint = torch.load(parser.weights, map_location=parser.device)
         retinanet.load_state_dict(checkpoint['model_state_dict'])
     else:
-        print(f"Cannot find weight at {parser.model_path}")
+        print(f"Cannot find weight at {parser.weights}")
+        raise ValueError
 
-    retinanet = retinanet.to(DEVICE)
+    retinanet = retinanet.to(parser.device)
     # retinanet = retinanet.cuda()
     # retinanet = torch.nn.DataParallel(retinanet).cuda()
 
@@ -55,9 +51,20 @@ def main(args=None):
     retinanet.eval()
     retinanet.freeze_bn() # retinanet.module.freeze_bn()
 
-    print(kitti_eval.evaluate(dataset_val, retinanet, iou_threshold = float(parser.iou_threshold), save_path = SAVE_PATH))
+    # Load dataset
+    dataset_val = KittiDataset(KITTI_PATH, split_path=f'{SPLIT_PATH}val.txt',
+                               transform=transforms.Compose([Normalizer(), KittiResizer()]),
+                               categories = CATEGORY)
 
-
+    result_str = kitti_eval.evaluate(dataset_val, 
+                                    retinanet, 
+                                    save_path,
+                                    SPLIT_PATH,
+                                    parser.device, 
+                                    iou_threshold = IOU_THRESHOLD)
+    print(result_str)
+    with open( parser.weights.split(".")[0] + "_val_result.txt", "w") as f:
+        f.write(result_str)
 
 if __name__ == '__main__':
     main()

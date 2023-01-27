@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import numpy as np
-from retinanet.config import DEVICE
+from retinanet.config_train import DEVICE
 
 def conv3x3(in_planes, out_planes, stride=1):
     """3x3 convolution with padding"""
@@ -81,15 +81,15 @@ class Bottleneck(nn.Module):
 
 class BBoxTransform(nn.Module):
 
-    def __init__(self, mean=None, std=None):
+    def __init__(self, mean=None, std=None, device = "cuda:0"):
         super(BBoxTransform, self).__init__()
         if mean is None:
-            self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)).to(DEVICE)
+            self.mean = torch.from_numpy(np.array([0, 0, 0, 0]).astype(np.float32)).to(device)
 
         else:
             self.mean = mean
         if std is None:
-            self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)).to(DEVICE)
+            self.std = torch.from_numpy(np.array([0.1, 0.1, 0.2, 0.2]).astype(np.float32)).to(device)
         else:
             self.std = std
 
