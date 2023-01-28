@@ -80,11 +80,6 @@ class KittiDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.transform({'img': self.imgs[idx], 'annot': self.labels[idx]})
-        # if self.transform:
-        #     return self.transform({'img': self.imgs[idx], 'annot': self.labels[idx]})
-        # else:
-        #     print("[ERROR] No transformation GG!!")
-        #     raise ValueError
 
     def load_image(self, image_index):
         return self.imgs[image_index]

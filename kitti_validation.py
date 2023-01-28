@@ -4,12 +4,11 @@ from torchvision import transforms
 from retinanet import model
 from retinanet.dataloader import KittiResizer, Normalizer, KittiDataset
 from retinanet import kitti_eval
-from retinanet.config_val import *
 import os
 from shutil import rmtree
 assert torch.__version__.split('.')[0] == '1'
 
-BACKBONE = "crop_feature_map" # "original" 'crop_feature_map' 'all_feature_map'
+# BACKBONE = "crop_feature_map" # "original" 'crop_feature_map' 'all_feature_map'
 SPLIT_PATH = "/home/lab530/KenYu/visualDet3D/visualDet3D/data/kitti/chen_split/" # "only_one_split " "dummy_exp" "chen_split" "debug_split"
 KITTI_PATH = "/home/lab530/KenYu/kitti/"
 CATEGORY = ['Car']
@@ -20,6 +19,7 @@ print('CUDA available: {}'.format(torch.cuda.is_available()))
 def main(args=None):
     parser = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
     parser.add_argument('--weights',type=str, default='/path/to/weights.pt')
+    parser.add_argument('--backbone',type=str, default='original')
     parser.add_argument('--device' ,type=str, default='cuda:0')
     parser = parser.parse_args(args)
     
@@ -32,7 +32,7 @@ def main(args=None):
     
 
     # Create the model
-    retinanet = model.resnet50(num_classes=len(CATEGORY), pretrained=True, mode = BACKBONE, device = parser.device)
+    retinanet = model.resnet50(num_classes=len(CATEGORY), pretrained=True, mode = parser.backbone, device = parser.device)
 
     # Load model weight
     if os.path.exists(parser.weights):

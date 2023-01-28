@@ -24,17 +24,9 @@ assert torch.__version__.split('.')[0] == '1'
 # for debugging
 # os.environ['CUDA_LAUNCH_BLOCKING'] = '1'
 
-print('CUDA available: {}'.format(torch.cuda.is_available()))
-
 print("Clean output directory : " + OUTPUT_DIR)
 rmtree(OUTPUT_DIR, ignore_errors=True)
 os.mkdir(OUTPUT_DIR)
-
-# 
-SAVE_PATH = os.path.join(OUTPUT_DIR, 'result')
-print("Clean output directory : " + SAVE_PATH)
-rmtree(SAVE_PATH, ignore_errors=True)
-os.mkdir(SAVE_PATH)
 
 def main(args=None):
     parser = argparse.ArgumentParser(description='Simple training script for training a RetinaNet network.')
@@ -53,18 +45,17 @@ def main(args=None):
 
     parser = parser.parse_args(args)
 
-
     # Create the model
     if parser.depth == 18:
-        retinanet = model.resnet18(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet18(num_classes=len(CATEGORY), pretrained=True)
     elif parser.depth == 34:
-        retinanet = model.resnet34(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet34(num_classes=len(CATEGORY), pretrained=True)
     elif parser.depth == 50:
-        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True, mode = BACKBONE, device = DEVICE)
+        retinanet = model.resnet50(num_classes=len(CATEGORY), pretrained=True, mode = BACKBONE, device = DEVICE)
     elif parser.depth == 101:
-        retinanet = model.resnet101(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet101(num_classes=len(CATEGORY), pretrained=True)
     elif parser.depth == 152:
-        retinanet = model.resnet152(num_classes=dataset_train.num_classes(), pretrained=True)
+        retinanet = model.resnet152(num_classes=len(CATEGORY), pretrained=True)
     else:
         raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
     
@@ -78,10 +69,10 @@ def main(args=None):
         # retinanet.load_state_dict(checkpoint['model_state_dict'])
         
         # Load partial of the pre-train model
-        try:
-            pretrained_dict = checkpoint['model_state_dict']
-        except KeyError: 
-            pretrained_dict = checkpoint
+        # try:
+        pretrained_dict = checkpoint['model_state_dict']
+        # except KeyError: 
+        #     pretrained_dict = checkpoint
         
         model_dict = retinanet.state_dict()
         # Reference: https://discuss.pytorch.org/t/how-to-load-part-of-pre-trained-model/1113/2
@@ -93,14 +84,13 @@ def main(args=None):
         retinanet.load_state_dict(model_dict)
         
     else:
-        print(f"Cannot find pretrain model at {PATH_TO_WEIGHTS}")
+        print(f"[WARNING] Cannot find pretrain model at {PATH_TO_WEIGHTS}")
     
     retinanet = retinanet.to(DEVICE)
-    # retinanet = torch.nn.DataParallel(retinanet).cuda()
     retinanet.training = True
 
     optimizer = optim.Adam(retinanet.parameters(), lr=1e-5) # 1e-5
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True) # 3
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3000, verbose=True) # 3
     # TODO, try cosineAnneling
     
     loss_hist = collections.deque(maxlen=500)
@@ -212,10 +202,16 @@ def main(args=None):
         if (epoch_num + 1) % VALID_EPOCH == 0:
             if parser.dataset == 'kitti':
                 print('Evaluating dataset')
-                # mAP = kitti_eval.evaluate(dataset_val, retinanet, SAVE_PATH)
+                
+                # Clean result.txt directory
+                save_path = f'{OUTPUT_DIR}/epoch{epoch_num}_result'
+                print("Clean output directory : " + save_path)
+                rmtree(save_path, ignore_errors=True)
+                os.mkdir(save_path)
+                
                 mAP = kitti_eval.evaluate(dataset_val, 
-                                            retinanet, 
-                                            SAVE_PATH,
+                                            retinanet,
+                                            save_path,
                                             SPLIT_PATH,
                                             DEVICE, 
                                             iou_threshold = IOU_THRESHOLD)

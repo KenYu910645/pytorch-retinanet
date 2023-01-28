@@ -43,6 +43,9 @@ class FocalLoss(nn.Module):
 
             classification = classifications[j, :, :]
             regression = regressions[j, :, :]
+            # print(f"classification = {classification.shape}")
+            print ((classification[:, 0] > 0.5).nonzero(as_tuple=True)[0])
+            # print(classification[:, 0].mean())
 
             bbox_annotation = annotations[j, :, :]
             bbox_annotation = bbox_annotation[bbox_annotation[:, 4] != -1]
@@ -62,7 +65,7 @@ class FocalLoss(nn.Module):
                 cls_loss = focal_weight * bce
                 classification_losses.append(cls_loss.sum())
                 regression_losses.append(torch.tensor(0).float().to(device))
-
+                # print("no annotation")
                 continue
             
             # Get IoU(Intersection over Union)
@@ -75,7 +78,7 @@ class FocalLoss(nn.Module):
             ###########################
             ### Classification Loss ###
             ###########################
-            targets = torch.ones(classification.shape) * -1
+            targets = torch.ones(classification.shape) * -1 # -1 means ignore sample
             targets = targets.to(device)
 
             targets[torch.lt(IoU_max, 0.4), :] = 0 # Iou less than 0.4 treat as negative sample
@@ -83,7 +86,7 @@ class FocalLoss(nn.Module):
             # print ((pos_ind == True).nonzero(as_tuple=True)[0])
 
             num_positive_anchors = pos_ind.sum()
-            # print(f"num_positive_anchors = {num_positive_anchors}")
+            print(f"num_positive_anchors = {num_positive_anchors}")
 
             assigned_annotations = bbox_annotation[IoU_argmax, :]
 
@@ -97,12 +100,14 @@ class FocalLoss(nn.Module):
             focal_weight = alpha_factor * torch.pow(focal_weight, gamma)
 
             bce = -(targets * torch.log(classification) + (1.0 - targets) * torch.log(1.0 - classification))
+            
             torch.set_printoptions(threshold=10_000)
             # print(f"bce = {bce.shape}") # torch.Size([20960, 1])
             # print ((bce > 0.5).nonzero(as_tuple=True)[0])
 
             # cls_loss = focal_weight * torch.pow(bce, gamma)
             cls_loss = focal_weight * bce
+            print(f"cls_loss.sum() = {cls_loss.sum()}")
 
             cls_loss = torch.where(torch.ne(targets, -1.0), cls_loss, torch.zeros(cls_loss.shape).to(device))
 
