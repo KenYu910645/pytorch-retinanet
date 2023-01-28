@@ -206,8 +206,17 @@ def main(args=None):
         if (epoch_num + 1) % VALID_EPOCH == 0:
             if parser.dataset == 'kitti':
                 print('Evaluating dataset')
-                mAP = kitti_eval.evaluate(dataset_val, retinanet, SAVE_PATH)
-
+                # mAP = kitti_eval.evaluate(dataset_val, retinanet, SAVE_PATH)
+                mAP = kitti_eval.evaluate(dataset_val, 
+                                            retinanet, 
+                                            SAVE_PATH,
+                                            SPLIT_PATH,
+                                            DEVICE, 
+                                            iou_threshold = IOU_THRESHOLD)
+                print(mAP)
+                with open( f'{OUTPUT_DIR}/epoch{epoch_num}_val_result.txt', "w") as f:
+                    f.write(mAP)
+            
             elif parser.dataset == 'coco':
                 print('Evaluating dataset')
                 coco_eval.evaluate_coco(dataset_val, retinanet)
