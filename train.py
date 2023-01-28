@@ -53,6 +53,61 @@ def main(args=None):
 
     parser = parser.parse_args(args)
 
+
+    # Create the model
+    if parser.depth == 18:
+        retinanet = model.resnet18(num_classes=dataset_train.num_classes(), pretrained=True)
+    elif parser.depth == 34:
+        retinanet = model.resnet34(num_classes=dataset_train.num_classes(), pretrained=True)
+    elif parser.depth == 50:
+        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True, mode = BACKBONE, device = DEVICE)
+    elif parser.depth == 101:
+        retinanet = model.resnet101(num_classes=dataset_train.num_classes(), pretrained=True)
+    elif parser.depth == 152:
+        retinanet = model.resnet152(num_classes=dataset_train.num_classes(), pretrained=True)
+    else:
+        raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
+    
+    # Load model weight
+    if os.path.exists(PATH_TO_WEIGHTS):
+        print(f"Use pretrained model at {PATH_TO_WEIGHTS}")
+
+        checkpoint = torch.load(PATH_TO_WEIGHTS)
+        
+        # Load the whole weight 
+        # retinanet.load_state_dict(checkpoint['model_state_dict'])
+        
+        # Load partial of the pre-train model
+        try:
+            pretrained_dict = checkpoint['model_state_dict']
+        except KeyError: 
+            pretrained_dict = checkpoint
+        
+        model_dict = retinanet.state_dict()
+        # Reference: https://discuss.pytorch.org/t/how-to-load-part-of-pre-trained-model/1113/2
+        # 1. filter out unnecessary keys
+        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
+        # 2. overwrite entries in the existing state dict
+        model_dict.update(pretrained_dict)
+        # 3. load the new state dict
+        retinanet.load_state_dict(model_dict)
+        
+    else:
+        print(f"Cannot find pretrain model at {PATH_TO_WEIGHTS}")
+    
+    retinanet = retinanet.to(DEVICE)
+    # retinanet = torch.nn.DataParallel(retinanet).cuda()
+    retinanet.training = True
+
+    optimizer = optim.Adam(retinanet.parameters(), lr=1e-5) # 1e-5
+    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True) # 3
+    # TODO, try cosineAnneling
+    
+    loss_hist = collections.deque(maxlen=500)
+
+    retinanet.train()
+    retinanet.freeze_bn() # retinanet.module.freeze_bn()
+
     # Create the data loaders
     if parser.dataset == 'kitti':
         # TODO, i temporary disable hisrozontal flipping for simplisity
@@ -100,55 +155,6 @@ def main(args=None):
     dataloader_train = DataLoader(dataset_train, batch_size=BATCH_SIZE, num_workers=NUMBER_WORKERS, 
                                   shuffle=True, pin_memory=True, collate_fn = kitti_collater)
 
-    # Create the model
-    if parser.depth == 18:
-        retinanet = model.resnet18(num_classes=dataset_train.num_classes(), pretrained=True)
-    elif parser.depth == 34:
-        retinanet = model.resnet34(num_classes=dataset_train.num_classes(), pretrained=True)
-    elif parser.depth == 50:
-        retinanet = model.resnet50(num_classes=dataset_train.num_classes(), pretrained=True, mode = BACKBONE, device = DEVICE)
-    elif parser.depth == 101:
-        retinanet = model.resnet101(num_classes=dataset_train.num_classes(), pretrained=True)
-    elif parser.depth == 152:
-        retinanet = model.resnet152(num_classes=dataset_train.num_classes(), pretrained=True)
-    else:
-        raise ValueError('Unsupported model depth, must be one of 18, 34, 50, 101, 152')
-    
-    # Load model weight
-    if os.path.exists(PATH_TO_WEIGHTS):
-        print(f"Use pretrained model at {PATH_TO_WEIGHTS}")
-
-        checkpoint = torch.load(PATH_TO_WEIGHTS)
-        
-        # Load the whole weight 
-        # retinanet.load_state_dict(checkpoint['model_state_dict'])
-        
-        # Load partial of the pre-train model
-        pretrained_dict = checkpoint['model_state_dict']
-        model_dict = retinanet.state_dict()
-        # Reference: https://discuss.pytorch.org/t/how-to-load-part-of-pre-trained-model/1113/2
-        # 1. filter out unnecessary keys
-        pretrained_dict = {k: v for k, v in pretrained_dict.items() if k in model_dict}
-        # 2. overwrite entries in the existing state dict
-        model_dict.update(pretrained_dict)
-        # 3. load the new state dict
-        retinanet.load_state_dict(model_dict)
-        
-    else:
-        print(f"Cannot find pretrain model at {PATH_TO_WEIGHTS}")
-    
-    retinanet = retinanet.to(DEVICE)
-    # retinanet = torch.nn.DataParallel(retinanet).cuda()
-    retinanet.training = True
-
-    optimizer = optim.Adam(retinanet.parameters(), lr=1e-5) # 1e-5
-    scheduler = optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, verbose=True) # 3
-    # TODO, try cosineAnneling
-    
-    loss_hist = collections.deque(maxlen=500)
-
-    retinanet.train()
-    retinanet.freeze_bn() # retinanet.module.freeze_bn()
 
     print('Num training images: {}'.format(len(dataset_train)))
 
